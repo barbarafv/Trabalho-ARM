@@ -1,5 +1,3 @@
-
-
 // arm_single.sv
 // David_Harris@hmc.edu and Sarah_Harris@hmc.edu 25 June 2013
 // Single-cycle implementation of a subset of ARMv4
@@ -102,7 +100,7 @@ module testbench();
   always @(negedge clk)
     begin
       if(MemWrite) begin
-	      if(DataAdr === 41 & WriteData === 2560) begin // Foi necessário alterar endereço de base para um menor (5)
+	      if(DataAdr === 41 & WriteData === 2560) begin // endereco de base alterado para 5 pois a memoria nao suporta tamanhos muito altos
           $display("Simulation succeeded");
           $stop;
         end 
@@ -127,7 +125,7 @@ module dmem(input  logic        clk, we,
             input  logic [31:0] a, wd,
             output logic [31:0] rd);
 
-	logic [31:0] RAM[127:0];   // Necessário aumentar tamanho da memoria (RAM[127:0])
+	logic [31:0] RAM[127:0];   // ram aumentada para suportar as novas instrucoes
 
   assign rd = RAM[a[31:2]]; // word aligned
 
@@ -185,10 +183,10 @@ module controller(input  logic         clk, reset,
   logic       PCS, RegW, MemW;
   
   decoder dec(Instr[27:26], Instr[25:20], Instr[15:12],
-              FlagW, PCS, RegW, MemW, NoWrite, // Acrescentar NoWrite
+              FlagW, PCS, RegW, MemW, NoWrite, // Acrescentar nowrite
               MemtoReg, ALUSrc, ImmSrc, RegSrc, ALUControl);
   condlogic cl(clk, reset, Instr[31:28], ALUFlags,
-               FlagW, PCS, RegW, MemW, NoWrite, // Acrescentar NoWrite
+               FlagW, PCS, RegW, MemW, NoWrite, // Acrescentar nowrite
                PCSrc, RegWrite, MemWrite);
 endmodule
 
@@ -244,6 +242,7 @@ module decoder(input  logic [1:0] Op,
   	    4'b1100: ALUControl = 2'b11; // ORR
 	    4'b1010: ALUControl = 2'b01; // Modificação 7: CMP faz a comparação através de subtração de ScrB de ScrA. 
 	    4'b1000: ALUControl = 2'b10; // Modificação 8: TST tem sua lógica basead em um AND. 	
+       	    4'b1101: ALUControl = 2'b00; // Modificacao 11 LSL - utilizando operador soma para especificar uma multiplicacao 
             default: ALUControl = 2'bx;  // unimplemented
       endcase
       // update flags if S bit is set 
@@ -279,7 +278,7 @@ module condlogic(input  logic       clk, reset,
 
   // write controls are conditional
   condcheck cc(Cond, Flags, CondEx);
-	assign FlagWrite = FlagW & {2{CondEx}} & ~NoWrite; // NoWrite quando ativado irá desativar escrita
+  assign FlagWrite = FlagW & {2{CondEx}} & ~NoWrite; // Para escrever ou nao
   assign RegWrite  = RegW  & CondEx;
   assign MemWrite  = MemW  & CondEx;
   assign PCSrc     = PCS   & CondEx;
@@ -319,7 +318,36 @@ module datapath(input  logic        clk, reset,
                 input  logic [1:0]  RegSrc,
                 input  logic        RegWrite,
                 input  logic [1:0]  ImmSrc,
-                input  logic        ALUSrc,
+                input  logic        ALUSrc,
+                input  logic [1:0]  ALUControl,
+                input  logic        MemtoReg,
+                input  logic        PCSrc,
+                output logic [3:0]  ALUFlags,
+                output logic [31:0] PC,
+                input  logic [31:0] Instr,
+                output logic [31:0] ALUResult, WriteData,
+                input  logic [31:0] ReadData);
+
+  logic [31:0] PCNext, PCPlus4, PCPlus8;
+  logic [31:0] ExtImm, SrcA, SrcB, Result;
+  logic [3:0]  RA1, RA2;
+
+  // next PC logic
+  mux2 #(32)  pcmux(PCPlus4, Result, PCSrc, PCNext);
+  flopr #(32) pcreg(clk, reset, PCNext, PC);
+  adder #(32) pcadd1(PC, 32'b100, PCPlus4);
+  adder #(32) pcadd2(PCPlus4, 32'b100, PCPlus8);
+
+  // register file logic
+  mux2 #(4)   ra1mux(Instr[19:16], 4'b1111, RegSrc[0], RA1);
+  mux2 #(4)   ra2mux(Instr[3:0], Instr[15:12], RegSrc[1], RA2);
+  regfile     rf(clk, RegWrite, RA1, RA2,
+                 Instr[15:12], Result, PCPlus8, 
+                 SrcA, WriteData); 
+  mux2 #(32)  resmux(ALUResult, ReadData, MemtoReg, Result);
+  extend      ext(Instr[23:0], ImmSrc, ExtImm);
+
+  // ALU logic
   mux2 #(32)  srcbmux(WriteData, ExtImm, ALUSrc, SrcB);
   alu         alu(SrcA, SrcB, ALUControl, 
                   ALUResult, ALUFlags);
@@ -424,3 +452,4 @@ module alu(input  logic [31:0] a, b,
                     (a[31] ^ sum[31]); 
   assign ALUFlags    = {neg, zero, carry, overflow};
 endmodule
+
